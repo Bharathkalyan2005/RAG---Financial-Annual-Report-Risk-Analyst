@@ -1,0 +1,43 @@
+# ─── API & Web ────────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+streamlit>=1.35.0
+
+# ─── Database ─────────────────────────────────────────────────────────────────
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+pgvector>=0.3.0            # pgvector Python client (SQLAlchemy integration)
+
+# ─── Embeddings & Reranker (local, no API cost) ───────────────────────────────
+sentence-transformers>=3.0.0
+FlagEmbedding>=1.2.0       # BAAI reranker (bge-reranker-v2-m3)
+
+# ─── HTML Parsing (SEC iXBRL 10-K filings) ────────────────────────────────────
+beautifulsoup4>=4.12.0     # HTML/XML parser
+lxml>=5.0.0                # Fast lxml backend for BeautifulSoup
+
+# ─── PDF Parsing (retained for fallback / older filings) ──────────────────────
+PyMuPDF>=1.24.0            # Fast text extraction (fitz)
+pdfplumber>=0.11.0         # Table extraction
+
+# ─── Data & Math ──────────────────────────────────────────────────────────────
+pandas>=2.2.0
+numpy>=1.26.0
+
+# ─── HTTP & Env ───────────────────────────────────────────────────────────────
+requests>=2.32.0
+python-dotenv>=1.0.0
+
+# ─── Evaluation ───────────────────────────────────────────────────────────────
+ragas>=0.1.9
+
+# ─── Testing ──────────────────────────────────────────────────────────────────
+pytest>=8.0.0
+
+# ─── CLI / Progress ───────────────────────────────────────────────────────────
+tqdm>=4.66.0             # progress bars for embed.py batches
+
+# ─── ML framework (sentence-transformers dependency) ─────────────────────────
+# CPU-only install is fine for inference on ~700 chunks.
+# For GPU: pip install torch --index-url https://download.pytorch.org/whl/cu118
+torch>=2.1.0

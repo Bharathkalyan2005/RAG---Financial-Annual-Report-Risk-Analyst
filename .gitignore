@@ -1,0 +1,61 @@
+# Secrets — NEVER commit real credentials
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Raw PDFs / HTMs (large binary/source files, not tracked in git)
+data/raw/*.pdf
+data/raw/*.htm
+data/raw/*.html
+
+# Processed extraction output (large, regeneratable from raw)
+data/processed/*.json
+
+# Final chunk store (regeneratable)
+data/processed/chunks.jsonl
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Testing & coverage
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Logs
+*.log
+logs/
+
+# Evaluation results (keep baseline, ignore intermediate runs)
+eval/results/v*.json
