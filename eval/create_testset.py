@@ -1,0 +1,57 @@
+"""
+eval/create_testset.py — Build ground-truth test set for RAG evaluation
+"""
+import json
+from pathlib import Path
+
+testset = [
+    # 2024 Financials
+    {"question": "What was Apple's total revenue in 2024?", "expected_answer": "$391,035 million", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["391,035", "net sales"]},
+    {"question": "What was Apple's net income in fiscal year 2024?", "expected_answer": "$93,736 million", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["93,736", "net income"]},
+    {"question": "What was Apple's gross margin in 2024?", "expected_answer": "$180,683 million", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["180,683", "gross margin"]},
+    {"question": "What was Apple's operating income in 2024?", "expected_answer": "$123,216 million", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["123,216", "operating income"]},
+    {"question": "What was Apple's commercial paper balance in 2024?", "expected_answer": "$9,967 million (or $10.0 billion)", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["9,967", "commercial paper"]},
+    {"question": "What were total current assets for Apple in 2024?", "expected_answer": "$152,987 million", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["152,987", "current assets"]},
+    {"question": "What was total shareholders' equity for Apple in 2024?", "expected_answer": "$56,950 million", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["56,950", "shareholders"]},
+    {"question": "What was Apple's cost of sales in 2024?", "expected_answer": "$210,352 million", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["210,352", "cost of sales"]},
+
+    # 2023 Financials
+    {"question": "What was Apple's total net sales in fiscal year 2023?", "expected_answer": "$383,285 million", "expected_year": 2023, "expected_section": "Item 8", "keywords": ["383,285", "net sales"]},
+    {"question": "What was Apple's net income in 2023?", "expected_answer": "$96,995 million", "expected_year": 2023, "expected_section": "Item 8", "keywords": ["96,995", "net income"]},
+    {"question": "What was Apple's operating income in 2023?", "expected_answer": "$114,301 million", "expected_year": 2023, "expected_section": "Item 8", "keywords": ["114,301", "operating income"]},
+    {"question": "What were total assets for Apple in 2023?", "expected_answer": "$352,583 million", "expected_year": 2023, "expected_section": "Item 8", "keywords": ["352,583", "total assets"]},
+    {"question": "What were total current liabilities for Apple in 2023?", "expected_answer": "$145,308 million", "expected_year": 2023, "expected_section": "Item 8", "keywords": ["145,308", "current liabilities"]},
+
+    # 2022 Financials
+    {"question": "What was Apple's total revenue in 2022?", "expected_answer": "$394,328 million", "expected_year": 2022, "expected_section": "Item 8", "keywords": ["394,328", "net sales"]},
+    {"question": "What was Apple's net income in 2022?", "expected_answer": "$99,803 million", "expected_year": 2022, "expected_section": "Item 8", "keywords": ["99,803", "net income"]},
+    {"question": "What was Apple's total shareholders' equity in 2022?", "expected_answer": "$50,672 million", "expected_year": 2022, "expected_section": "Item 8", "keywords": ["50,672", "shareholders"]},
+
+    # 2021 Financials
+    {"question": "What was Apple's total revenue in 2021?", "expected_answer": "$365,817 million", "expected_year": 2021, "expected_section": "Item 8", "keywords": ["365,817", "net sales"]},
+    {"question": "What was Apple's net income in 2021?", "expected_answer": "$94,680 million", "expected_year": 2021, "expected_section": "Item 8", "keywords": ["94,680", "net income"]},
+    {"question": "What was Apple's total equity in 2021?", "expected_answer": "$63,090 million", "expected_year": 2021, "expected_section": "Item 8", "keywords": ["63,090", "shareholders"]},
+
+    # 2025 Financials
+    {"question": "What was Apple's total revenue in 2025?", "expected_answer": "$416,161 million", "expected_year": 2025, "expected_section": "Item 8", "keywords": ["416,161", "net sales"]},
+    {"question": "What was Apple's net income in 2025?", "expected_answer": "$112,010 million", "expected_year": 2025, "expected_section": "Item 8", "keywords": ["112,010", "net income"]},
+
+    # Risk Factors (Qualitative)
+    {"question": "What are Apple's regulatory risks regarding the App Store and Digital Markets Act?", "expected_answer": "Antitrust scrutiny, DMA compliance in the EU, alternative app stores, fee commission changes", "expected_year": 2024, "expected_section": "Item 1A", "keywords": ["regulatory", "digital markets act", "app store"]},
+    {"question": "What supply chain and single-source risks does Apple disclose in 2024?", "expected_answer": "Dependence on single-source suppliers and outsourced manufacturing partners primarily in Asia", "expected_year": 2024, "expected_section": "Item 1A", "keywords": ["supply chain", "single-source", "manufacturing"]},
+    {"question": "How does Apple describe its cybersecurity and data breach risks?", "expected_answer": "Risks of unauthorized access, cyberattacks, network intrusions, and ransomware compromising confidential data", "expected_year": 2024, "expected_section": "Item 1A", "keywords": ["cybersecurity", "cyberattack", "data breach"]},
+    {"question": "What foreign exchange currency risks does Apple face?", "expected_answer": "Volatility in exchange rates (Euro, Yen, Renminbi) affecting net sales and gross margin", "expected_year": 2024, "expected_section": "Item 7A", "keywords": ["foreign exchange", "currency", "hedging"]},
+    {"question": "What legal proceedings and antitrust litigation does Apple disclose in 2024?", "expected_answer": "Antitrust litigation with developers, government investigations, and patent infringement lawsuits", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["litigation", "antitrust", "legal"]},
+    {"question": "What are the commercial paper program risks described by Apple?", "expected_answer": "Maturities of short-term promissory notes and general corporate liquidity needs", "expected_year": 2024, "expected_section": "Item 8", "keywords": ["commercial paper", "promissory notes"]},
+    {"question": "What intellectual property risks does Apple face regarding patent infringement?", "expected_answer": "Companies aggressively suing for patent infringement and asserting licensing claims", "expected_year": 2023, "expected_section": "Item 1A", "keywords": ["patent", "intellectual property", "infringement"]},
+    {"question": "How does geopolitical tension in Greater China affect Apple's operations?", "expected_answer": "Manufacturing concentration, trade restrictions, tariffs, and regional supply chain disruption", "expected_year": 2023, "expected_section": "Item 1A", "keywords": ["china", "supply chain", "trade"]},
+    {"question": "What are Apple's climate change and natural disaster risks in 2024?", "expected_answer": "Extreme weather events disrupting logistics, data centers, and outsourced assembly facilities", "expected_year": 2024, "expected_section": "Item 1A", "keywords": ["climate", "disaster", "facilities"]},
+]
+
+dest = Path("eval/testset.jsonl")
+dest.parent.mkdir(parents=True, exist_ok=True)
+with open(dest, "w", encoding="utf-8") as f:
+    for item in testset:
+        f.write(json.dumps(item) + "\n")
+
+print(f"Created {len(testset)} verified test questions in {dest}")
