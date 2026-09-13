@@ -86,7 +86,7 @@ def retrieve_hybrid(
 
     # Base WHERE clauses for metadata filtering
     where_clauses = []
-    params: dict[str, Any] = {"q_vec": str(q_emb), "query_text": query}
+    params: dict[str, Any] = {"q_emb": str(q_emb), "query_text": query}
 
     if company:
         where_clauses.append("company = :company")
@@ -104,10 +104,10 @@ def retrieve_hybrid(
         # 1. Dense Vector Search (top-20)
         vec_sql = f"""
             SELECT id, company, year, section, COALESCE(position_id, page) AS position_id,
-                   chunk_type, text, (embedding <=> :q_emb::vector) AS dist
+                   chunk_type, text, (embedding <=> CAST(:q_emb AS vector)) AS dist
             FROM chunks
             WHERE embedding IS NOT NULL {extra_filter}
-            ORDER BY embedding <=> :q_emb::vector ASC
+            ORDER BY embedding <=> CAST(:q_emb AS vector) ASC
             LIMIT {vector_top_k};
         """
         vec_rows = conn.execute(text(vec_sql), params).mappings().all()
