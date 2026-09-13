@@ -54,6 +54,15 @@ def generate_answer(
     """
     Generate a cited answer from retrieved chunks or abstain if confidence is insufficient.
     """
+    from generation.classify import is_greeting_or_help, GREETING_RESPONSE
+    if is_greeting_or_help(question):
+        return {
+            "answer": GREETING_RESPONSE,
+            "citations": [],
+            "confidence": 1.0,
+            "abstain_reason": None,
+        }
+
     if not retrieved_chunks:
         return {
             "answer": "Insufficient evidence in the available filings to answer this question reliably.",
@@ -61,6 +70,7 @@ def generate_answer(
             "confidence": 0.0,
             "abstain_reason": "No chunks retrieved",
         }
+
 
     # Abstention check: top rerank score below threshold
     top_score = retrieved_chunks[0].get("rerank_score", 0.0)

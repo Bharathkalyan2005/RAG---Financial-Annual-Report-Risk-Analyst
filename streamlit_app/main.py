@@ -262,66 +262,65 @@ with tab_qa:
         with st.chat_message("user"):
             st.markdown(prompt_to_run)
 
+        from generation.classify import is_greeting_or_help, GREETING_RESPONSE
+
         with st.chat_message("assistant"):
-            with st.spinner("Searching pgvector + BM25, reranking with Cross-Encoder, and generating cited answer..."):
-                # Detect year from question or sidebar filter
-                q_year = filter_yr_val
-                if not q_year:
-                    m = re.search(r"\b(202[1-5])\b", prompt_to_run)
-                    if m:
-                        q_year = int(m.group(1))
-
-                from retrieval.hybrid import retrieve_hybrid
-                from generation.answer import generate_answer
-
-                # Hybrid retrieval + rerank
-                chunks = retrieve_hybrid(
-                    query=prompt_to_run,
-                    year=q_year,
-                    final_top_k=5,
-                )
-
-                # Generation
-                try:
-                    gen_result = generate_answer(
-                        question=prompt_to_run,
-                        retrieved_chunks=chunks,
-                    )
-                except Exception as e:
-                    gen_result = {
-                        "answer": f"**Retrieval Succeeded**, but synthesis encountered an issue: {e}",
-                        "confidence": 0.5,
-                        "citations": [],
-                    }
-
-                answer_text = gen_result.get("answer", "No answer could be synthesized.")
-                conf = gen_result.get("confidence", 0.0)
-
-
-                # Build response presentation
-                st.markdown(f"{answer_text}")
-                st.markdown(f"<span class='badge-confidence'>Confidence: {conf*100:.0f}%</span>", unsafe_allow_html=True)
-
-                citations_data = []
-                for c in chunks[:3]:
-                    citations_data.append({
-                        "year": c.get("year"),
-                        "section": c.get("section"),
-                        "position_id": c.get("position_id"),
-                        "text": c.get("text", "").strip(),
-                        "score": c.get("rerank_score"),
-                    })
-
-                with st.expander("📚 View Verified SEC Citations & Source Passages", expanded=False):
-                    for idx, c in enumerate(citations_data, 1):
-                        st.markdown(f"**[{idx}] FY{c['year']} · {c['section']} (Position {c['position_id']}) · Rerank Score: {c['score']:.4f}**")
-                        st.info(c["text"])
-
+            if is_greeting_or_help(prompt_to_run):
+                answer_text = GREETING_RESPONSE
+                conf = 1.0
+                st.markdown(answer_text)
+                st.markdown("<span class='badge-confidence'>Confidence: 100%</span>", unsafe_allow_html=True)
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": f"{answer_text}\n\n`Confidence: {conf*100:.0f}%`",
-                    "citations": citations_data,
+                    "content": f"{answer_text}\n\n`Confidence: 100%`",
+                    "citations": [],
                 })
+            else:
+                with st.spinner("Searching pgvector + BM25, reranking with Cross-Encoder, and generating cited answer..."):
+                    # Detect year from question or sidebar filter
+                    q_year = filter_yr_val
+                    if not q_year:
+                        m = re.search(r"\b(202[1-5])\b", prompt_to_run)
+                        if m:
+                            q_year = int(m.group(1))
+
+                    from retrieval.hybrid import retrieve_hybrid
+                    from generation.answer import generate_answer
+                    from generation.router import route_and_execute
+
+                    # Route through full multi-modal pipeline
+                    try:
+                        route_res = route_and_execute(
+                            question=prompt_to_run,
+                            year=q_year,
+                            company="AAPL",
+                        )
+                        answer_text = route_res.get("answer", "No answer could be synthesized.")
+                        conf = route_res.get("confidence", 0.0)
+                        citations_data = route_res.get("citations", [])
+                    except Exception as e:
+                        answer_text = f"**Pipeline Note**: Query processed via fallback due to: {e}"
+                        conf = 0.5
+                        citations_data = []
+
+                    # Build response presentation
+                    st.markdown(f"{answer_text}")
+                    st.markdown(f"<span class='badge-confidence'>Confidence: {conf*100:.0f}%</span>", unsafe_allow_html=True)
+
+                    if citations_data and conf > 0.0:
+                        with st.expander("📚 View Verified SEC Citations & Source Passages", expanded=False):
+                            for idx, c in enumerate(citations_data, 1):
+                                pos_str = f" (Position {c.get('position_id')})" if c.get('position_id') else ""
+                                st.markdown(f"**[{idx}] FY{c.get('year')} · {c.get('section')}{pos_str}**")
+                                if c.get("text"):
+                                    st.info(c["text"])
+
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"{answer_text}\n\n`Confidence: {conf*100:.0f}%`",
+                        "citations": citations_data if conf > 0.0 else [],
+                    })
+
 
 # ── Tab 2: Financial Charts ──────────────────────────────────────────────────
 with tab_charts:

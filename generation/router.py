@@ -16,7 +16,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 
 from db import engine
-from generation.classify import QueryCategory, classify_question
+from generation.classify import QueryCategory, classify_question, GREETING_RESPONSE
 from generation.answer import generate_answer
 from retrieval.hybrid import retrieve_hybrid
 
@@ -35,8 +35,20 @@ def route_and_execute(
     category: QueryCategory = classify_question(question)
     log.info("Query '%s' routed to category [%s]", question, category)
 
+    if category == "GREETING":
+        return {
+            "category": "GREETING",
+            "question": question,
+            "answer": GREETING_RESPONSE,
+            "citations": [],
+            "confidence": 1.0,
+            "retrieved_count": 0,
+            "top_rerank_score": 1.0,
+        }
+
     if category == "CALCULATION":
         return _handle_calculation(question, year, company)
+
 
     # All qualitative routes: INFO, COMPARISON, TREND, RISK
     retrieved_chunks = retrieve_hybrid(

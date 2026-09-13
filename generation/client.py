@@ -24,15 +24,18 @@ load_dotenv()
 
 log = logging.getLogger("generation.client")
 
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
 class OpenRouterError(Exception):
-    """Raised when both primary and fallback OpenRouter models fail."""
+    """Raised when primary and fallback LLM models fail."""
     pass
 
 
 class OpenRouterClient:
+    """Unified LLM client supporting Groq (primary high-speed) and OpenRouter (fallback)."""
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -42,15 +45,26 @@ class OpenRouterClient:
         backoff_factor: float = 2.0,
         timeout: int = 60,
     ):
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise EnvironmentError("OPENROUTER_API_KEY is not set in environment or .env file.")
+        groq_key = os.getenv("GROQ_API_KEY")
+        if groq_key:
+            self.provider = "groq"
+            self.endpoint = GROQ_URL
+            self.api_key = api_key or groq_key
+            self.primary_model = primary_model or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+            self.fallback_model = fallback_model or os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")
+        else:
+            self.provider = "openrouter"
+            self.endpoint = OPENROUTER_URL
+            self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+            if not self.api_key:
+                raise EnvironmentError("Neither GROQ_API_KEY nor OPENROUTER_API_KEY is set in .env.")
+            self.primary_model = primary_model or os.getenv("OPENROUTER_MODEL", "inclusionai/ling-3.0-flash-fin:free")
+            self.fallback_model = fallback_model or os.getenv("OPENROUTER_FALLBACK_MODEL", "liquid/lfm-2.5-2.6b:free")
 
-        self.primary_model = primary_model or os.getenv("OPENROUTER_MODEL", "inclusionai/ling-3.0-flash-fin:free")
-        self.fallback_model = fallback_model or os.getenv("OPENROUTER_FALLBACK_MODEL", "liquid/lfm-2.5-2.6b:free")
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         self.timeout = timeout
+        log.info("Initialized LLMClient (provider=%s, primary=%s, fallback=%s)", self.provider, self.primary_model, self.fallback_model)
 
     def _call_model(
         self,
@@ -59,13 +73,15 @@ class OpenRouterClient:
         temperature: float = 0.0,
         max_tokens: int = 2000,
     ) -> str:
-        """Call OpenRouter with exponential backoff on 429 and 5xx."""
+        """Call LLM endpoint with exponential backoff."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/fin-risk-analyst",
-            "X-Title": "Financial Annual Report Risk Analyst",
         }
+        if self.provider == "openrouter":
+            headers["HTTP-Referer"] = "https://github.com/fin-risk-analyst"
+            headers["X-Title"] = "Financial Annual Report Risk Analyst"
+
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -79,11 +95,12 @@ class OpenRouterClient:
             try:
                 log.info("Sending request to %s (attempt %d/%d)", model, attempt, self.max_retries)
                 response = requests.post(
-                    OPENROUTER_URL,
+                    self.endpoint,
                     headers=headers,
                     json=payload,
                     timeout=self.timeout,
                 )
+
 
                 if response.status_code == 200:
                     data = response.json()
