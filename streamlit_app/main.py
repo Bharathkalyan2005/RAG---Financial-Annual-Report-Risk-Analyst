@@ -282,13 +282,21 @@ with tab_qa:
                 )
 
                 # Generation
-                gen_result = generate_answer(
-                    question=prompt_to_run,
-                    retrieved_chunks=chunks,
-                )
+                try:
+                    gen_result = generate_answer(
+                        question=prompt_to_run,
+                        retrieved_chunks=chunks,
+                    )
+                except Exception as e:
+                    gen_result = {
+                        "answer": f"**Retrieval Succeeded**, but synthesis encountered an issue: {e}",
+                        "confidence": 0.5,
+                        "citations": [],
+                    }
 
                 answer_text = gen_result.get("answer", "No answer could be synthesized.")
                 conf = gen_result.get("confidence", 0.0)
+
 
                 # Build response presentation
                 st.markdown(f"{answer_text}")

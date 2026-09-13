@@ -66,13 +66,13 @@ class OpenRouterClient:
             "HTTP-Referer": "https://github.com/fin-risk-analyst",
             "X-Title": "Financial Annual Report Risk Analyst",
         }
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "reasoning": {"effort": "none"},
         }
+
 
         last_err: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
@@ -96,6 +96,15 @@ class OpenRouterClient:
                     log.warning("Model %s returned empty message content. Retrying...", model)
 
                 if response.status_code in (429, 500, 502, 503, 504):
+                    # If daily free model quota is exhausted, fail fast immediately
+                    if response.status_code == 429 and ("free-models-per-day" in response.text or "credits" in response.text):
+                        log.warning("Daily free tier quota exhausted for model %s: %s", model, response.text[:150])
+                        raise requests.HTTPError(
+                            f"Daily quota limit (50 requests/day) reached on OpenRouter free tier: {response.text[:150]}",
+                            response=response,
+                        )
+
+                    last_err = requests.HTTPError(f"HTTP {response.status_code}: {response.text[:150]}", response=response)
                     sleep_time = self.backoff_factor ** attempt
                     log.warning(
                         "OpenRouter returned %d for model %s. Retrying in %.1fs... (error: %s)",
@@ -108,10 +117,12 @@ class OpenRouterClient:
                     continue
 
                 # Unrecoverable error (e.g. 400, 401)
-                raise requests.HTTPError(
+                last_err = requests.HTTPError(
                     f"OpenRouter HTTP {response.status_code}: {response.text}",
                     response=response,
                 )
+                raise last_err
+
 
             except (requests.RequestException, requests.Timeout) as e:
                 last_err = e

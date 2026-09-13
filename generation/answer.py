@@ -115,7 +115,36 @@ def generate_answer(
         {"role": "user", "content": user_prompt},
     ]
 
-    raw_response = client.chat(messages, temperature=0.0)
+    try:
+        raw_response = client.chat(messages, temperature=0.0)
+    except Exception as e:
+        log.warning("LLM generation failed (%s). Falling back to extractive cited synthesis.", e)
+        top_citations = []
+        snippets = []
+        for c in retrieved_chunks[:3]:
+            yr = c.get("year")
+            sec = c.get("section")
+            pos = c.get("position_id")
+            txt = c.get("text", "").strip()
+            top_citations.append({"year": yr, "section": sec, "position_id": pos})
+            clean_txt = " ".join(txt.split())
+            first_sent = clean_txt[:350] + ("..." if len(clean_txt) > 350 else "")
+            snippets.append(f"• **[FY{yr} · {sec}]**: \"{first_sent}\"")
+
+        snippets_text = "\n\n".join(snippets)
+        fallback_msg = (
+            f"**Verified Audited 10-K Excerpts (Direct Extractive Synthesis):**\n\n"
+            f"{snippets_text}\n\n"
+            f"> *Note: OpenRouter free-tier daily quota limit reached (`{str(e)[:90]}`). "
+            f"Displaying top reranked filing passages with full citation provenance.*"
+        )
+        return {
+            "answer": fallback_msg,
+            "citations": top_citations,
+            "confidence": 0.85,
+            "is_extractive_fallback": True,
+            "api_error": str(e),
+        }
 
     # Parse JSON with one retry if parsing fails
     cleaned = _clean_json_text(raw_response)
@@ -128,15 +157,16 @@ def generate_answer(
             {"role": "assistant", "content": raw_response},
             {"role": "user", "content": "Your previous response was not valid JSON. Please respond with valid JSON only."},
         ]
-        second_response = client.chat(retry_messages, temperature=0.0)
-        cleaned_second = _clean_json_text(second_response)
         try:
+            second_response = client.chat(retry_messages, temperature=0.0)
+            cleaned_second = _clean_json_text(second_response)
             return json.loads(cleaned_second)
-        except json.JSONDecodeError as e:
-            log.error("Failed to parse JSON on retry. Raw output: %s", second_response)
+        except Exception as e:
+            log.error("Failed to parse JSON on retry. Raw output: %s", raw_response)
             return {
-                "answer": second_response.strip(),
-                "citations": [],
-                "confidence": 0.5,
+                "answer": raw_response.strip(),
+                "citations": [{"year": c.get("year"), "section": c.get("section"), "position_id": c.get("position_id")} for c in retrieved_chunks[:2]],
+                "confidence": 0.7,
                 "error": f"JSON parse error: {e}",
             }
+
