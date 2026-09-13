@@ -46,8 +46,8 @@ class OpenRouterClient:
         if not self.api_key:
             raise EnvironmentError("OPENROUTER_API_KEY is not set in environment or .env file.")
 
-        self.primary_model = primary_model or os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free")
-        self.fallback_model = fallback_model or os.getenv("OPENROUTER_FALLBACK_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+        self.primary_model = primary_model or os.getenv("OPENROUTER_MODEL", "inclusionai/ling-3.0-flash-fin:free")
+        self.fallback_model = fallback_model or os.getenv("OPENROUTER_FALLBACK_MODEL", "liquid/lfm-2.5-2.6b:free")
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         self.timeout = timeout
@@ -57,7 +57,7 @@ class OpenRouterClient:
         model: str,
         messages: list[dict[str, str]],
         temperature: float = 0.0,
-        max_tokens: int = 1000,
+        max_tokens: int = 2000,
     ) -> str:
         """Call OpenRouter with exponential backoff on 429 and 5xx."""
         headers = {
@@ -71,6 +71,7 @@ class OpenRouterClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "reasoning": {"effort": "none"},
         }
 
         last_err: Exception | None = None
@@ -86,7 +87,13 @@ class OpenRouterClient:
 
                 if response.status_code == 200:
                     data = response.json()
-                    return data["choices"][0]["message"]["content"].strip()
+                    choices = data.get("choices", [])
+                    if choices:
+                        msg = choices[0].get("message", {})
+                        content = msg.get("content") or msg.get("reasoning") or choices[0].get("text") or ""
+                        if content:
+                            return content.strip()
+                    log.warning("Model %s returned empty message content. Retrying...", model)
 
                 if response.status_code in (429, 500, 502, 503, 504):
                     sleep_time = self.backoff_factor ** attempt

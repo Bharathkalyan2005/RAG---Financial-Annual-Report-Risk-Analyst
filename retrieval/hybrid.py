@@ -51,13 +51,21 @@ def get_embed_model() -> SentenceTransformer:
 def get_reranker() -> Any:
     global _reranker
     if _reranker is None:
-        try:
-            from FlagEmbedding import FlagReranker
-            _reranker = FlagReranker(RERANKER_MODEL_NAME, use_fp16=False)
-        except Exception:
-            # Fallback to sentence-transformers CrossEncoder if FlagReranker is unavailable
+        model_path = RERANKER_MODEL_NAME
+        # If relative path exists relative to project root
+        if not os.path.exists(model_path) and os.path.exists(os.path.join(os.path.dirname(os.path.dirname(__file__)), model_path)):
+            model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), model_path)
+
+        if "cross-encoder" in model_path.lower() or os.path.exists(model_path) or not "bge" in model_path.lower():
             from sentence_transformers import CrossEncoder
-            _reranker = CrossEncoder(RERANKER_MODEL_NAME)
+            _reranker = CrossEncoder(model_path)
+        else:
+            try:
+                from FlagEmbedding import FlagReranker
+                _reranker = FlagReranker(model_path, use_fp16=False)
+            except Exception:
+                from sentence_transformers import CrossEncoder
+                _reranker = CrossEncoder(model_path)
     return _reranker
 
 

@@ -24,9 +24,14 @@ data/raw/*.html
 
 # Processed extraction output (large, regeneratable from raw)
 data/processed/*.json
+data/processed/*.csv
 
 # Final chunk store (regeneratable)
 data/processed/chunks.jsonl
+
+# Local downloaded models & scratch files
+models/
+scratch/
 
 # Databases
 *.db
