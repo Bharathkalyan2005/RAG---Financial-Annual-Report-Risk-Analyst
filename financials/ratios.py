@@ -35,11 +35,14 @@ RATIOS_CSV = Path("data/processed/ratios.csv")
 
 def load_financials_df(company: str = "AAPL") -> pd.DataFrame:
     """Load financials table from Neon into a pivoted pandas DataFrame (years as rows, metrics as columns)."""
+    company_str = "AAPL"
+    if isinstance(company, str):
+        company_str = company.split()[0].upper()
     with engine.connect() as conn:
         df = pd.read_sql(
             text("SELECT year, metric, value FROM financials WHERE company = :company ORDER BY year, metric"),
             conn,
-            params={"company": company},
+            params={"company": company_str},
         )
 
     if df.empty:
@@ -47,6 +50,7 @@ def load_financials_df(company: str = "AAPL") -> pd.DataFrame:
 
     pivoted = df.pivot(index="year", columns="metric", values="value")
     return pivoted
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -107,10 +111,19 @@ def calculate_interest_coverage(op_inc: float, interest: float) -> float:
 # DataFrame Computation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def compute_all_ratios(company: str = "AAPL") -> pd.DataFrame:
+def compute_all_ratios(
+    company_or_df: str | pd.DataFrame = "AAPL",
+    company: Optional[str] = None,
+) -> pd.DataFrame:
     """Compute all 10 standard ratios across all 5 years."""
-    df = load_financials_df(company)
+    if isinstance(company_or_df, pd.DataFrame):
+        df = company_or_df
+    elif company is not None and isinstance(company, str):
+        df = load_financials_df(company)
+    else:
+        df = load_financials_df(str(company_or_df))
     ratios = pd.DataFrame(index=df.index)
+
 
     ratios["gross_margin"] = df.apply(lambda r: calculate_gross_margin(r.get("revenue", 0), r.get("cost_of_revenue", 0)), axis=1)
     ratios["operating_margin"] = df.apply(lambda r: calculate_operating_margin(r.get("operating_income", 0), r.get("revenue", 0)), axis=1)
