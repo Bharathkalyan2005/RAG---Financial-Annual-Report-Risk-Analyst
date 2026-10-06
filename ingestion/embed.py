@@ -160,6 +160,7 @@ def insert_chunks(
                         position_id = chunk["position_id"],
                         chunk_index = chunk.get("chunk_index"),
                         chunk_type  = chunk["chunk_type"],
+                        image_path  = chunk.get("image_path"),
                         text        = chunk["text"],
                         embedding   = emb,
                         # search_vector populated below via raw SQL after flush
@@ -199,14 +200,46 @@ def insert_chunks(
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
-def embed_and_store() -> None:
+def embed_and_store(incremental: bool = False) -> None:
+    import argparse
     log.info("=" * 60)
-    log.info("Phase 2 — Embedding + Storage")
+    log.info("Phase 2 — Embedding + Storage (incremental=%s)", incremental)
     log.info("=" * 60)
 
     # 1. Load chunks
     chunks = load_chunks()
     log.info("Loaded %d chunks from %s", len(chunks), CHUNKS_FILE)
+
+    if incremental:
+        session = SessionLocal()
+        try:
+            # Query existing chunks count or metadata to determine which are missing
+            existing_count = session.query(Chunk).count()
+            if existing_count > 0:
+                # Get set of already inserted (company, year, position_id, chunk_index, chunk_type)
+                existing_keys = set(
+                    session.query(
+                        Chunk.company,
+                        Chunk.year,
+                        Chunk.position_id,
+                        Chunk.chunk_index,
+                        Chunk.chunk_type
+                    ).all()
+                )
+                filtered_chunks = []
+                for c in chunks:
+                    key = (c["company"], c["year"], c.get("position_id"), c.get("chunk_index"), c["chunk_type"])
+                    if key not in existing_keys:
+                        filtered_chunks.append(c)
+                log.info("Incremental mode: %d already in DB, %d new chunks to embed and insert", existing_count, len(filtered_chunks))
+                chunks = filtered_chunks
+        finally:
+            session.close()
+
+    if not chunks:
+        log.info("No new chunks to embed.")
+        return
+
     by_year = {}
     for c in chunks:
         by_year[c["year"]] = by_year.get(c["year"], 0) + 1
@@ -253,4 +286,8 @@ def embed_and_store() -> None:
 
 
 if __name__ == "__main__":
-    embed_and_store()
+    import argparse
+    parser = argparse.ArgumentParser(description="Embed chunks and store in Neon DB")
+    parser.add_argument("--incremental", action="store_true", help="Only embed and store chunks not currently in the DB")
+    args = parser.parse_args()
+    embed_and_store(incremental=args.incremental)

@@ -26,7 +26,7 @@ from sqlalchemy import text
 
 from db import engine
 from financials.ratios import compute_all_ratios, load_financials_df
-from generation.answer import generate_answer
+from generation.router import route_and_execute
 from retrieval.hybrid import retrieve_hybrid
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s")
@@ -61,6 +61,9 @@ class CitationItem(BaseModel):
     year: Optional[int] = None
     section: Optional[str] = None
     position_id: Optional[int] = None
+    chunk_type: Optional[str] = None
+    image_path: Optional[str] = None
+    text: Optional[str] = None
 
 
 class QueryResponse(BaseModel):
@@ -69,7 +72,7 @@ class QueryResponse(BaseModel):
     citations: list[CitationItem]
     confidence: float
     abstain_reason: Optional[str] = None
-    retrieved_chunks: list[dict[str, Any]]
+    retrieved_chunks: list[dict[str, Any]] = []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -175,11 +178,11 @@ def get_eval_results():
 @app.post("/api/query", response_model=QueryResponse)
 def query_rag(request: QueryRequest):
     """
-    Execute full RAG pipeline:
-      1. Extract year metadata if present
-      2. Hybrid dense vector + sparse BM25 search with Reciprocal Rank Fusion
-      3. Cross-encoder neural reranking
-      4. Grounded citation-aware answer generation via OpenRouter
+    Execute full RAG pipeline with intent-based routing:
+      1. Auto-detect year metadata if present
+      2. Intent classification (CALCULATION vs QUALITATIVE vs GREETING)
+      3. Hybrid dense vector + sparse BM25 search with Reciprocal Rank Fusion & Cross-Encoder
+      4. Grounded citation-aware answer generation or deterministic Pandas calculation
     """
     q = request.question.strip()
     if not q:
@@ -192,34 +195,38 @@ def query_rag(request: QueryRequest):
         if match:
             year_filter = int(match.group(1))
 
-    # 1. Retrieval
     try:
-        chunks = retrieve_hybrid(
-            query=q,
-            year=year_filter,
-            final_top_k=request.top_k,
-        )
-    except Exception as e:
-        log.error("Retrieval error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Retrieval failure: {e}")
-
-    # 2. Generation
-    try:
-        gen_result = generate_answer(
+        route_result = route_and_execute(
             question=q,
-            retrieved_chunks=chunks,
+            year=year_filter,
+            company="AAPL",
         )
     except Exception as e:
-        log.error("Generation error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Generation failure: {e}")
+        log.error("Routing/Execution error: %s", e)
+        raise HTTPException(status_code=500, detail=f"Query execution failure: {e}")
+
+    # Convert citations to CitationItem models
+    raw_citations = route_result.get("citations", [])
+    citation_models = []
+    for c in raw_citations:
+        citation_models.append(
+            CitationItem(
+                year=c.get("year"),
+                section=c.get("section"),
+                position_id=c.get("position_id"),
+                chunk_type=c.get("chunk_type"),
+                image_path=c.get("image_path"),
+                text=c.get("text"),
+            )
+        )
 
     return QueryResponse(
         question=q,
-        answer=gen_result.get("answer", "No answer generated."),
-        citations=gen_result.get("citations", []),
-        confidence=gen_result.get("confidence", 0.0),
-        abstain_reason=gen_result.get("abstain_reason"),
-        retrieved_chunks=chunks,
+        answer=route_result.get("answer", "No answer generated."),
+        citations=citation_models,
+        confidence=route_result.get("confidence", 0.0),
+        abstain_reason=route_result.get("abstain_reason"),
+        retrieved_chunks=[],
     )
 
 

@@ -112,7 +112,7 @@ def retrieve_hybrid(
         # 1. Dense Vector Search (top-20)
         vec_sql = f"""
             SELECT id, company, year, section, COALESCE(position_id, page) AS position_id,
-                   chunk_type, text, (embedding <=> CAST(:q_emb AS vector)) AS dist
+                   chunk_type, image_path, text, (embedding <=> CAST(:q_emb AS vector)) AS dist
             FROM chunks
             WHERE embedding IS NOT NULL {extra_filter}
             ORDER BY embedding <=> CAST(:q_emb AS vector) ASC
@@ -123,7 +123,7 @@ def retrieve_hybrid(
         # 2. Sparse Keyword Search (top-20)
         kw_sql = f"""
             SELECT id, company, year, section, COALESCE(position_id, page) AS position_id,
-                   chunk_type, text,
+                   chunk_type, image_path, text,
                    ts_rank_cd(search_vector, plainto_tsquery('english', :query_text)) AS rank
             FROM chunks
             WHERE search_vector @@ plainto_tsquery('english', :query_text) {extra_filter}
@@ -193,6 +193,7 @@ def retrieve_hybrid(
             "section": r["section"],
             "position_id": r["position_id"],
             "chunk_type": r["chunk_type"],
+            "image_path": r.get("image_path"),
             "text": r["text"],
             "rerank_score": round(r["rerank_score"], 4),
         })

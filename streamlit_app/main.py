@@ -250,6 +250,10 @@ with tab_qa:
                 with st.expander("📚 View Verified SEC Citations & Source Passages"):
                     for idx, cit in enumerate(msg["citations"], 1):
                         st.markdown(f"**Citation [{idx}] — FY{cit.get('year')} {cit.get('section')} (Position {cit.get('position_id')})**")
+                        if (cit.get("chunk_type") == "image" or cit.get("image_path")) and cit.get("image_path"):
+                            img_path = Path(cit["image_path"])
+                            if img_path.exists():
+                                st.image(str(img_path), caption=f"SEC Filing Figure: FY{cit.get('year')} {cit.get('section')}", use_container_width=True)
                         if cit.get("text"):
                             st.info(cit["text"])
 
@@ -312,6 +316,10 @@ with tab_qa:
                             for idx, c in enumerate(citations_data, 1):
                                 pos_str = f" (Position {c.get('position_id')})" if c.get('position_id') else ""
                                 st.markdown(f"**[{idx}] FY{c.get('year')} · {c.get('section')}{pos_str}**")
+                                if (c.get("chunk_type") == "image" or c.get("image_path")) and c.get("image_path"):
+                                    img_path = Path(c["image_path"])
+                                    if img_path.exists():
+                                        st.image(str(img_path), caption=f"SEC Filing Figure: FY{c.get('year')} {c.get('section')}", use_container_width=True)
                                 if c.get("text"):
                                     st.info(c["text"])
 

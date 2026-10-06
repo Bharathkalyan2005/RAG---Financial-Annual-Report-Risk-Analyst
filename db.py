@@ -90,7 +90,8 @@ class Chunk(Base):
     page = Column(Integer, nullable=True)                    # PDF page number (1-based) or position_id
     position_id = Column(Integer, nullable=True)             # synthetic HTML position id
     chunk_index = Column(Integer, nullable=True)             # chunk index within file/section
-    chunk_type = Column(String(32), nullable=False, default="text")  # "text" | "table"
+    chunk_type = Column(String(32), nullable=False, default="text")  # "text" | "table" | "image"
+    image_path = Column(String(512), nullable=True)          # relative path to saved image file
 
     # ── Content ─────────────────────────────────────────────────────────────
     text = Column(Text, nullable=False)
