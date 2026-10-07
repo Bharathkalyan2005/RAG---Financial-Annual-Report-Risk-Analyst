@@ -72,3 +72,15 @@ def test_compute_query_metric_known_queries():
     res_gm = compute_query_metric("What was Apple's gross margin in 2024?", year=2024)
     assert res_gm is not None
     assert "46.21%" in res_gm["answer"]
+
+    # FY2023 Operating Income
+    res_op = compute_query_metric("What was Apple's operating income in 2023?", year=2023)
+    assert res_op is not None
+    assert "114,301" in res_op["answer"]
+
+    # FY2023 Ambiguous "Total Income" query (must clarify both Net Income and Operating Income)
+    res_tot = compute_query_metric("that is total income in 2023", year=2023)
+    assert res_tot is not None
+    assert "96,995" in res_tot["answer"]
+    assert "114,301" in res_tot["answer"]
+    assert "383,285" in res_tot["answer"]

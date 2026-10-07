@@ -217,6 +217,38 @@ def compute_query_metric(
             "computed_via": "pandas",
         }
 
+    if "operating income" in q_lower:
+        val = yr_fin.get("operating_income", 0.0)
+        return {
+            "answer": f"Apple's Operating Income for FY{target_year} was ${val:,.1f} million.",
+            "value": val,
+            "metric": "operating_income",
+            "year": target_year,
+            "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+            "confidence": 1.0,
+            "computed_via": "pandas",
+        }
+
+    if "total income" in q_lower:
+        net_inc = yr_fin.get("net_income", 0.0)
+        op_inc = yr_fin.get("operating_income", 0.0)
+        rev = yr_fin.get("revenue", 0.0)
+        return {
+            "answer": (
+                f"In US GAAP 10-K filings, Apple does not report a single line item titled 'Total Income'. "
+                f"Depending on context, the official earnings metrics for FY{target_year} are:\n"
+                f"- **Net Income (Bottom-line profit)**: **${net_inc:,.1f} million**\n"
+                f"- **Operating Income (Operating profit)**: **${op_inc:,.1f} million**\n"
+                f"- **Total Net Sales / Revenue (Top-line income)**: **${rev:,.1f} million**."
+            ),
+            "value": net_inc,
+            "metric": "net_income",
+            "year": target_year,
+            "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+            "confidence": 1.0,
+            "computed_via": "pandas",
+        }
+
     # Fallback to direct raw metric
     for m in ["revenue", "net_income", "total_debt", "total_assets", "total_equity"]:
         if m.replace("_", " ") in q_lower:

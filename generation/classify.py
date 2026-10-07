@@ -61,7 +61,7 @@ Analyze the user's question and classify it into EXACTLY ONE of the following ca
 - COMPARISON: Comparing qualitative facts or statements between specific years (e.g. "How did Item 1A differ between 2022 and 2023?")
 - TREND: Multi-year qualitative trajectory or strategy evolution (e.g. "How has Apple's supply chain strategy evolved over the 5 years?")
 - RISK: Focused specifically on threats, regulatory risks, lawsuits, or cybersecurity (e.g. "What are Apple's principal legal risks in 2024?")
-- CALCULATION: Involves computing financial ratios, percentage growth, margins, debt ratios, or arithmetic (e.g. "What was the gross margin in 2024?", "Calculate YoY revenue growth from 2023 to 2024")
+- CALCULATION: Involves computing financial ratios, percentage growth, margins, debt ratios, arithmetic, or specific financial statement metrics (e.g. "What was the gross margin in 2024?", "What is total income in 2023?", "Calculate YoY revenue growth from 2023 to 2024")
 
 Respond with ONLY the single label: INFO, COMPARISON, TREND, RISK, or CALCULATION.
 No punctuation, no explanation, no other words."""
