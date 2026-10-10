@@ -1,9 +1,9 @@
 {
   "mode": "improved",
-  "total_queries": 30,
-  "recall_at_1": 0.6667,
-  "recall_at_3": 0.7667,
-  "recall_at_5": 0.8333,
-  "mrr": 0.7278,
-  "year_precision": 0.8467
+  "total_queries": 55,
+  "recall_at_1": 0.6,
+  "recall_at_3": 0.6545,
+  "recall_at_5": 0.6909,
+  "mrr": 0.6324,
+  "year_precision": 0.8436
 }

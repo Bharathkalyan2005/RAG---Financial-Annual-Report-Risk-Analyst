@@ -78,6 +78,7 @@ def retrieve_hybrid(
     company: Optional[str] = None,
     year: Optional[int] = None,
     section: Optional[str] = None,
+    chunk_type: Optional[str] = None,
     vector_top_k: int = 20,
     keyword_top_k: int = 20,
     final_top_k: int = 5,
@@ -105,6 +106,9 @@ def retrieve_hybrid(
     if section:
         where_clauses.append("section ILIKE :section")
         params["section"] = f"%{section}%"
+    if chunk_type:
+        where_clauses.append("chunk_type = :chunk_type")
+        params["chunk_type"] = chunk_type
 
     extra_filter = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
 

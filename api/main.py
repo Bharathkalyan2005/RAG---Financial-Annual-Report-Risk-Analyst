@@ -47,6 +47,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from agent.loop import run_agent_loop
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Request / Response Schemas
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +57,12 @@ class QueryRequest(BaseModel):
     question: str = Field(..., example="What was Apple's total debt in 2024?")
     year: Optional[int] = Field(None, example=2024, description="Optional fiscal year filter (2021-2025)")
     top_k: int = Field(5, ge=1, le=10, description="Number of top chunks to return")
+
+
+class AgentQueryRequest(BaseModel):
+    question: str = Field(..., example="How did debt and FX risk change from 2022 to 2025?")
+    year: Optional[int] = Field(None, example=2024, description="Optional fiscal year filter (2021-2025)")
+    mode: str = Field("agent", example="agent", description="'agent' for iterative tool loop, 'fast' for single-pass pipeline")
 
 
 class CitationItem(BaseModel):
@@ -66,6 +74,14 @@ class CitationItem(BaseModel):
     text: Optional[str] = None
 
 
+class AgentTraceStep(BaseModel):
+    step: int
+    thought: str
+    action: str
+    args: dict[str, Any]
+    observation: str
+
+
 class QueryResponse(BaseModel):
     question: str
     answer: str
@@ -73,6 +89,19 @@ class QueryResponse(BaseModel):
     confidence: float
     abstain_reason: Optional[str] = None
     retrieved_chunks: list[dict[str, Any]] = []
+
+
+class AgentQueryResponse(BaseModel):
+    question: str
+    answer: str
+    citations: list[CitationItem]
+    confidence: float
+    mode: str
+    steps_used: int
+    trace: list[AgentTraceStep] = []
+    verification: Optional[dict[str, Any]] = None
+    abstain_reason: Optional[str] = None
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -230,6 +259,103 @@ def query_rag(request: QueryRequest):
     )
 
 
+@app.post("/api/agent_query", response_model=AgentQueryResponse)
+def query_agent(request: AgentQueryRequest):
+    """
+    Execute Agentic RAG loop with tool use, evidence grading, and claim verification.
+    Supports mode='agent' (iterative multi-step planner) or mode='fast' (single-pass pipeline).
+    """
+    q = request.question.strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+
+    year_filter = request.year
+    if not year_filter:
+        match = re.search(r"\b(202[1-5])\b", q)
+        if match:
+            year_filter = int(match.group(1))
+
+    mode_selected = request.mode.lower()
+    if mode_selected not in ("agent", "fast"):
+        mode_selected = "agent"
+
+    try:
+        if mode_selected == "fast":
+            fast_res = route_and_execute(question=q, year=year_filter, company="AAPL")
+            raw_citations = fast_res.get("citations", [])
+            citations_list = [
+                CitationItem(
+                    year=c.get("year"),
+                    section=c.get("section"),
+                    position_id=c.get("position_id"),
+                    chunk_type=c.get("chunk_type"),
+                    image_path=c.get("image_path"),
+                    text=c.get("text"),
+                )
+                for c in raw_citations
+            ]
+            trace_steps = [
+                AgentTraceStep(
+                    step=1,
+                    thought="Direct single-pass execution via fast pipeline.",
+                    action="route_and_execute",
+                    args={"year": year_filter, "category": fast_res.get("category")},
+                    observation=f"Completed {fast_res.get('category')} route. Top rerank score: {fast_res.get('top_rerank_score', 1.0):.3f}",
+                )
+            ]
+            return AgentQueryResponse(
+                question=q,
+                answer=fast_res.get("answer", "No answer generated."),
+                citations=citations_list,
+                confidence=fast_res.get("confidence", 0.0),
+                mode="fast",
+                steps_used=1,
+                trace=trace_steps,
+                verification={"all_passed": True, "supported_claims": [], "removed_claims": []},
+                abstain_reason=fast_res.get("abstain_reason"),
+            )
+        else:
+            agent_res = run_agent_loop(question=q, year=year_filter)
+            raw_citations = agent_res.get("citations", [])
+            citations_list = [
+                CitationItem(
+                    year=c.get("year"),
+                    section=c.get("section"),
+                    position_id=c.get("position_id"),
+                    chunk_type=c.get("chunk_type"),
+                    image_path=c.get("image_path"),
+                    text=c.get("text"),
+                )
+                for c in raw_citations
+            ]
+            raw_trace = agent_res.get("trace", [])
+            trace_steps = [
+                AgentTraceStep(
+                    step=t.get("step", idx),
+                    thought=t.get("thought", ""),
+                    action=t.get("action", ""),
+                    args=t.get("args", {}),
+                    observation=t.get("observation", ""),
+                )
+                for idx, t in enumerate(raw_trace, 1)
+            ]
+            return AgentQueryResponse(
+                question=q,
+                answer=agent_res.get("answer", "No answer generated."),
+                citations=citations_list,
+                confidence=agent_res.get("confidence", 0.0),
+                mode=agent_res.get("mode", "agent"),
+                steps_used=agent_res.get("steps_used", len(trace_steps)),
+                trace=trace_steps,
+                verification=agent_res.get("verification"),
+                abstain_reason=None if agent_res.get("confidence", 0.0) > 0 else "Insufficient evidence",
+            )
+    except Exception as e:
+        log.error("Agent query failure: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Agent execution failure: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

@@ -151,8 +151,19 @@ with st.sidebar:
     filter_yr_val = int(year_filter) if year_filter.isdigit() else None
 
     st.markdown("---")
+    st.subheader("Query Mode")
+    mode_choice = st.radio(
+        "RAG Pipeline Architecture",
+        ["Agentic (Loop + Tools + Verifier)", "Fast (Single-Pass Pipeline)"],
+        index=0,
+        help="Agentic mode runs multi-step planning, deterministic tool execution, evidence grading, and claim verification. Fast mode runs the single-pass baseline."
+    )
+    is_agent_mode = "Agentic" in mode_choice
+
+    st.markdown("---")
     st.subheader("System Architecture")
     st.markdown("""
+    - **Architecture**: Dual Mode (Agentic Loop & Fast RAG)
     - **Database**: Neon Postgres + pgvector
     - **Embeddings**: BAAI/bge-large-en-v1.5
     - **Reranker**: ms-marco-MiniLM-L-6-v2
@@ -246,6 +257,16 @@ with tab_qa:
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg.get("trace"):
+                with st.expander("🔍 Agent Reasoning & Step Trace", expanded=False):
+                    for t in msg["trace"]:
+                        s_num = t.get("step")
+                        act = t.get("action")
+                        th = t.get("thought")
+                        st.markdown(f"**Step {s_num}: `{act}`**")
+                        if th:
+                            st.caption(f"Thought: {th}")
+                        st.text(f"Observation: {t.get('observation', '')}")
             if msg.get("citations"):
                 with st.expander("📚 View Verified SEC Citations & Source Passages"):
                     for idx, cit in enumerate(msg["citations"], 1):
@@ -279,8 +300,8 @@ with tab_qa:
                     "content": f"{answer_text}\n\n`Confidence: 100%`",
                     "citations": [],
                 })
-            else:
-                with st.spinner("Searching pgvector + BM25, reranking with Cross-Encoder, and generating cited answer..."):
+            elif is_agent_mode:
+                with st.spinner("🤖 Agentic Planner: reasoning over tools, grading evidence, and verifying claims..."):
                     # Detect year from question or sidebar filter
                     q_year = filter_yr_val
                     if not q_year:
@@ -288,28 +309,42 @@ with tab_qa:
                         if m:
                             q_year = int(m.group(1))
 
-                    from retrieval.hybrid import retrieve_hybrid
-                    from generation.answer import generate_answer
-                    from generation.router import route_and_execute
-
-                    # Route through full multi-modal pipeline
+                    from agent.loop import run_agent_loop
                     try:
-                        route_res = route_and_execute(
-                            question=prompt_to_run,
-                            year=q_year,
-                            company="AAPL",
-                        )
-                        answer_text = route_res.get("answer", "No answer could be synthesized.")
-                        conf = route_res.get("confidence", 0.0)
-                        citations_data = route_res.get("citations", [])
+                        agent_res = run_agent_loop(question=prompt_to_run, year=q_year)
+                        answer_text = agent_res.get("answer", "No answer could be synthesized.")
+                        conf = agent_res.get("confidence", 0.0)
+                        citations_data = agent_res.get("citations", [])
+                        trace_data = agent_res.get("trace", [])
+                        steps_count = agent_res.get("steps_used", len(trace_data))
                     except Exception as e:
-                        answer_text = f"**Pipeline Note**: Query processed via fallback due to: {e}"
-                        conf = 0.5
+                        answer_text = "The agent encountered an execution error while processing this query. Please try again or switch to Fast mode."
+                        conf = 0.0
                         citations_data = []
+                        trace_data = []
+                        steps_count = 0
 
-                    # Build response presentation
                     st.markdown(f"{answer_text}")
-                    st.markdown(f"<span class='badge-confidence'>Confidence: {conf*100:.0f}%</span>", unsafe_allow_html=True)
+                    badge_col1, badge_col2 = st.columns([1, 3])
+                    with badge_col1:
+                        st.markdown(f"<span class='badge-confidence'>Confidence: {conf*100:.0f}%</span>", unsafe_allow_html=True)
+                    with badge_col2:
+                        st.caption(f"⚙️ Mode: Agentic Loop · Steps Executed: {steps_count}")
+
+                    # Expandable reasoning panel
+                    if trace_data:
+                        with st.expander("🔍 Agent Reasoning & Step-by-Step Trace", expanded=False):
+                            for t in trace_data:
+                                s_idx = t.get("step")
+                                act = t.get("action")
+                                th = t.get("thought", "")
+                                a_args = json.dumps(t.get("args", {}))
+                                obs = t.get("observation", "")
+                                st.markdown(f"**Step {s_idx}: Tool `{act}`**")
+                                if th:
+                                    st.markdown(f"*{th}*")
+                                st.code(f"{act}({a_args})", language="json")
+                                st.info(f"**Observation:** {obs}")
 
                     if citations_data and conf > 0.0:
                         with st.expander("📚 View Verified SEC Citations & Source Passages", expanded=False):
@@ -325,9 +360,60 @@ with tab_qa:
 
                     st.session_state.messages.append({
                         "role": "assistant",
-                        "content": f"{answer_text}\n\n`Confidence: {conf*100:.0f}%`",
+                        "content": f"{answer_text}\n\n`Confidence: {conf*100:.0f}%` · Mode: Agentic ({steps_count} steps)",
                         "citations": citations_data if conf > 0.0 else [],
+                        "trace": trace_data,
                     })
+            else:
+                with st.spinner("Searching pgvector + BM25, reranking with Cross-Encoder, and generating cited answer..."):
+                    # Fast mode single-pass pipeline
+                    q_year = filter_yr_val
+                    if not q_year:
+                        m = re.search(r"\b(202[1-5])\b", prompt_to_run)
+                        if m:
+                            q_year = int(m.group(1))
+
+                    from generation.router import route_and_execute
+                    try:
+                        route_res = route_and_execute(
+                            question=prompt_to_run,
+                            year=q_year,
+                            company="AAPL",
+                        )
+                        answer_text = route_res.get("answer", "No answer could be synthesized.")
+                        conf = route_res.get("confidence", 0.0)
+                        citations_data = route_res.get("citations", [])
+                    except Exception as e:
+                        answer_text = "Query processed via fallback due to an execution error."
+                        conf = 0.5
+                        citations_data = []
+
+                    st.markdown(f"{answer_text}")
+                    badge_col1, badge_col2 = st.columns([1, 3])
+                    with badge_col1:
+                        st.markdown(f"<span class='badge-confidence'>Confidence: {conf*100:.0f}%</span>", unsafe_allow_html=True)
+                    with badge_col2:
+                        st.caption("⚙️ Mode: Fast Single-Pass")
+
+                    if citations_data and conf > 0.0:
+                        with st.expander("📚 View Verified SEC Citations & Source Passages", expanded=False):
+                            for idx, c in enumerate(citations_data, 1):
+                                pos_str = f" (Position {c.get('position_id')})" if c.get('position_id') else ""
+                                st.markdown(f"**[{idx}] FY{c.get('year')} · {c.get('section')}{pos_str}**")
+                                if (c.get("chunk_type") == "image" or c.get("image_path")) and c.get("image_path"):
+                                    img_path = Path(c["image_path"])
+                                    if img_path.exists():
+                                        st.image(str(img_path), caption=f"SEC Filing Figure: FY{c.get('year')} {c.get('section')}", use_container_width=True)
+                                if c.get("text"):
+                                    st.info(c["text"])
+
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"{answer_text}\n\n`Confidence: {conf*100:.0f}%` · Mode: Fast",
+                        "citations": citations_data if conf > 0.0 else [],
+                        "trace": [],
+                    })
+
 
 
 # ── Tab 2: Financial Charts ──────────────────────────────────────────────────
