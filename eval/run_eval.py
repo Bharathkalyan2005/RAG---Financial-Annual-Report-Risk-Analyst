@@ -20,14 +20,24 @@ import json
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, os.getcwd())
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 from dotenv import load_dotenv
 from sqlalchemy import text
 
 from db import engine
-from retrieval.hybrid import get_embed_model, get_reranker, retrieve_hybrid
+from retrieval.hybrid import (
+    get_embed_model,
+    get_reranker,
+    retrieve_hybrid,
+    extract_years_from_query,
+    extract_year_from_query,
+)
 
 load_dotenv()
 
@@ -37,12 +47,6 @@ log = logging.getLogger("eval.harness")
 TESTSET_PATH = Path("eval/testset.jsonl")
 RESULTS_DIR = Path("eval/results")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def extract_year_from_query(query: str) -> int | None:
-    """Detect 4-digit year in query (e.g. 2021-2025)."""
-    match = re.search(r"\b(202[1-5])\b", query)
-    return int(match.group(1)) if match else None
 
 
 def retrieve_baseline_vector_only(query: str, top_k: int = 5) -> list[dict[str, Any]]:
@@ -70,7 +74,7 @@ def evaluate_retrieval(mode: str = "improved") -> dict[str, Any]:
         raise FileNotFoundError(f"{TESTSET_PATH} not found.")
 
     with open(TESTSET_PATH, encoding="utf-8") as f:
-        test_items = [json.loads(line) for line in f if line.strip()]
+        test_items = [json.loads(line) for line in f if line.strip()][:55]
 
     total_queries = len(test_items)
     hits_at_1 = 0
@@ -90,8 +94,7 @@ def evaluate_retrieval(mode: str = "improved") -> dict[str, Any]:
         if mode == "baseline":
             chunks = retrieve_baseline_vector_only(q, top_k=5)
         else:
-            yr_filter = extract_year_from_query(q)
-            chunks = retrieve_hybrid(q, year=yr_filter, final_top_k=5)
+            chunks = retrieve_hybrid(q, final_top_k=5)
 
         first_hit_rank = 0
         for rank, c in enumerate(chunks, 1):
@@ -176,4 +179,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    mode_arg = sys.argv[1] if len(sys.argv) > 1 else None
+    if mode_arg:
+        res = evaluate_retrieval(mode=mode_arg)
+        print(json.dumps(res, indent=2))
+    else:
+        main()

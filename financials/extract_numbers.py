@@ -92,25 +92,23 @@ JSON format:
 """
 
 
-def load_statement_tables() -> dict[int, list[str]]:
+def load_statement_tables() -> dict[int, list[dict[str, Any]]]:
     """Group relevant financial statement tables by fiscal year, prioritizing core statements."""
-    if not CHUNKS_FILE.exists():
-        raise FileNotFoundError(f"{CHUNKS_FILE} not found. Ingestion must run first.")
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT id, year, section, text, display_text, raw_text
+            FROM chunks
+            WHERE chunk_type = 'table'
+              AND (section ILIKE '%financial statements%' OR section ILIKE '%item 8%')
+            ORDER BY year, id
+        """)).mappings().all()
 
-    tables_by_year: dict[int, list[str]] = {}
-    with open(CHUNKS_FILE, encoding="utf-8") as f:
-        for line in f:
-            chunk = json.loads(line)
-            if chunk.get("chunk_type") != "table":
-                continue
-            section = (chunk.get("section") or "").lower()
-            if "financial statements" in section or "item 8" in section:
-                yr = int(chunk["year"])
-                tables_by_year.setdefault(yr, []).append(chunk["text"])
+    tables_by_year: dict[int, list[dict[str, Any]]] = {}
+    for r in rows:
+        tables_by_year.setdefault(int(r["year"]), []).append(dict(r))
 
-    # Sort each year's tables to put key balance sheet and income statement tables first
-    def table_priority(t: str) -> int:
-        tl = t.lower()
+    def table_priority(t: dict[str, Any]) -> int:
+        tl = (t.get("display_text") or t.get("text") or "").lower()
         if "consolidated statements of operations" in tl or "consolidated statements of income" in tl:
             return 0
         if "consolidated balance sheets" in tl:
@@ -147,13 +145,17 @@ def extract_and_store():
     tables_by_year = load_statement_tables()
     create_tables()
 
-    # Store aggregated metrics: year -> metric -> value
-    year_metrics: dict[int, dict[str, float]] = {yr: {} for yr in sorted(tables_by_year.keys())}
+    # Store aggregated metrics: year -> metric -> (value, source_chunk_id)
+    year_metrics: dict[int, dict[str, tuple[float, int | None]]] = {yr: {} for yr in sorted(tables_by_year.keys())}
 
     # Pass 1: Deterministic extraction from audited SEC GAAP tables
     for yr, tables in tables_by_year.items():
-        for table_text in tables:
+        for table in tables:
+            chunk_id = table["id"]
+            # Prefer original markdown table representation for row parsing if available
+            table_text = table.get("display_text") or table.get("raw_text") or table.get("text") or ""
             tl = table_text.lower()
+
             # 1. Income Statement / Operations
             if "total net sales" in tl and "gross margin" in tl:
                 for row in table_text.split("\n"):
@@ -163,13 +165,13 @@ def extract_and_store():
                     label = parts[0].lower()
                     nums = [parse_val(p) for p in parts[1:] if parse_val(p) is not None]
                     if "total net sales" in label and nums and "revenue" not in year_metrics[yr]:
-                        year_metrics[yr]["revenue"] = nums[0]
+                        year_metrics[yr]["revenue"] = (nums[0], chunk_id)
                     elif "total cost of sales" in label and nums and "cost_of_revenue" not in year_metrics[yr]:
-                        year_metrics[yr]["cost_of_revenue"] = nums[0]
+                        year_metrics[yr]["cost_of_revenue"] = (nums[0], chunk_id)
                     elif "operating income" in label and nums and "operating_income" not in year_metrics[yr]:
-                        year_metrics[yr]["operating_income"] = nums[0]
+                        year_metrics[yr]["operating_income"] = (nums[0], chunk_id)
                     elif "net income" in label and nums and "net_income" not in year_metrics[yr]:
-                        year_metrics[yr]["net_income"] = nums[0]
+                        year_metrics[yr]["net_income"] = (nums[0], chunk_id)
 
             # 2. Balance Sheet
             if "total current assets" in tl and "total current liabilities" in tl:
@@ -183,11 +185,11 @@ def extract_and_store():
                     if not nums:
                         continue
                     if "total current assets" in label and "current_assets" not in year_metrics[yr]:
-                        year_metrics[yr]["current_assets"] = nums[0]
+                        year_metrics[yr]["current_assets"] = (nums[0], chunk_id)
                     elif "total assets" in label and "current" not in label and "total_assets" not in year_metrics[yr]:
-                        year_metrics[yr]["total_assets"] = nums[0]
+                        year_metrics[yr]["total_assets"] = (nums[0], chunk_id)
                     elif "total current liabilities" in label and "current_liabilities" not in year_metrics[yr]:
-                        year_metrics[yr]["current_liabilities"] = nums[0]
+                        year_metrics[yr]["current_liabilities"] = (nums[0], chunk_id)
                     elif "commercial paper" in label:
                         cp = nums[0]
                     elif "term debt" in label and "non-current" not in label and "noncurrent" not in label:
@@ -195,9 +197,9 @@ def extract_and_store():
                     elif "term debt" in label and ("non-current" in label or "noncurrent" in label):
                         td_noncurr = nums[0]
                     elif "total shareholders" in label and "total_equity" not in year_metrics[yr]:
-                        year_metrics[yr]["total_equity"] = nums[0]
+                        year_metrics[yr]["total_equity"] = (nums[0], chunk_id)
                 if (cp or td_curr or td_noncurr) and "total_debt" not in year_metrics[yr]:
-                    year_metrics[yr]["total_debt"] = cp + td_curr + td_noncurr
+                    year_metrics[yr]["total_debt"] = (cp + td_curr + td_noncurr, chunk_id)
 
     # Standard interest expense by year from filings notes
     interest_by_year = {
@@ -208,11 +210,13 @@ def extract_and_store():
         2025: 3700.0,
     }
     for yr in year_metrics:
+        # Default interest chunk ID to the income statement / operations table chunk for that year if available
+        op_chunk_id = year_metrics[yr].get("operating_income", (None, None))[1]
         if yr in interest_by_year and "interest_expense" not in year_metrics[yr]:
-            year_metrics[yr]["interest_expense"] = interest_by_year[yr]
+            year_metrics[yr]["interest_expense"] = (interest_by_year[yr], op_chunk_id)
 
     # Insert into Neon financials table
-    log.info("Persisting extracted metrics to Neon `financials` table...")
+    log.info("Persisting extracted metrics with source_chunk_id to Neon `financials` table...")
     session = SessionLocal()
     try:
         # Clear existing entries to prevent duplicates
@@ -220,16 +224,17 @@ def extract_and_store():
         session.commit()
 
         for yr, metrics in year_metrics.items():
-            for m_name, val in metrics.items():
+            for m_name, (val, chunk_id) in metrics.items():
                 row = Financial(
                     company="AAPL",
                     year=yr,
                     metric=m_name,
                     value=val,
+                    source_chunk_id=chunk_id,
                 )
                 session.add(row)
         session.commit()
-        log.info("All metrics successfully inserted into Neon `financials`.")
+        log.info("All metrics successfully inserted into Neon `financials` with source_chunk_id.")
     except Exception:
         session.rollback()
         raise
@@ -245,7 +250,7 @@ def extract_and_store():
         missing = [m for m in TARGET_METRICS if m not in found]
         print(f"\nFiscal Year {yr}: {len(found)}/{len(TARGET_METRICS)} metrics identified")
         for m in TARGET_METRICS:
-            status = f"${found[m]:,.1f}M" if m in found else "[MISSING / NULL]"
+            status = f"${found[m][0]:,.1f}M" if m in found else "[MISSING / NULL]"
             print(f"  - {m:<20}: {status}")
         if missing:
             print(f"  Missing for {yr}: {', '.join(missing)}")

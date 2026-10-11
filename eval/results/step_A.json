@@ -1,0 +1,9 @@
+{
+  "mode": "step_A",
+  "total_queries": 55,
+  "recall_at_1": 0.6,
+  "recall_at_3": 0.6909,
+  "recall_at_5": 0.7455,
+  "mrr": 0.6552,
+  "year_precision": 0.8727
+}

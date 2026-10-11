@@ -142,12 +142,64 @@ def compute_all_ratios(
     return ratios.round(4)
 
 
+def get_metric_source_chunks(
+    year: int,
+    metric_names: list[str],
+    company: str = "AAPL",
+) -> list[dict[str, Any]]:
+    """Fetch source chunk records and real table text from database for calculation citations."""
+    company_str = company.split()[0].upper() if isinstance(company, str) else "AAPL"
+    with engine.connect() as conn:
+        fin_rows = conn.execute(
+            text("""
+                SELECT metric, value, source_chunk_id
+                FROM financials
+                WHERE year = :year AND company = :company AND metric = ANY(:metrics)
+            """),
+            {"year": year, "company": company_str, "metrics": metric_names},
+        ).mappings().all()
+
+        chunk_ids = list({r["source_chunk_id"] for r in fin_rows if r["source_chunk_id"] is not None})
+        if not chunk_ids:
+            return [{
+                "year": year,
+                "section": "Item 8. Financial Statements",
+                "position_id": 1,
+                "text": f"Computed from financials table: {', '.join(metric_names)}",
+                "source_chunk_id": None,
+            }]
+
+        chunk_rows = conn.execute(
+            text("""
+                SELECT id, year, section, COALESCE(position_id, page, 1) AS position_id,
+                       text, display_text, raw_text
+                FROM chunks
+                WHERE id = ANY(:chunk_ids)
+                ORDER BY id
+            """),
+            {"chunk_ids": chunk_ids},
+        ).mappings().all()
+
+    citations = []
+    for c in chunk_rows:
+        chunk_text = c["display_text"] or c["raw_text"] or c["text"] or ""
+        citations.append({
+            "source_chunk_id": c["id"],
+            "chunk_id": c["id"],
+            "year": c["year"],
+            "section": c["section"],
+            "position_id": c["position_id"],
+            "text": chunk_text,
+        })
+    return citations
+
+
 def compute_query_metric(
     question: str,
     year: Optional[int] = None,
     company: Optional[str] = "AAPL",
 ) -> dict[str, Any]:
-    """Helper function called by generation/router.py to answer calculation queries."""
+    """Helper function called by generation/router.py to answer calculation queries with real table chunk citations."""
     ratios_df = compute_all_ratios(company=company or "AAPL")
     fin_df = load_financials_df(company=company or "AAPL")
 
@@ -163,68 +215,122 @@ def compute_query_metric(
     # Match metric
     if "gross margin" in q_lower:
         val = yr_ratios["gross_margin"] * 100
+        citations = get_metric_source_chunks(target_year, ["revenue", "cost_of_revenue"], company=company or "AAPL")
         return {
             "answer": f"Apple's Gross Margin for FY{target_year} was {val:.2f}%, calculated as (Revenue - Cost of Revenue) / Revenue.",
             "value": round(val, 2),
             "metric": "gross_margin",
             "year": target_year,
-            "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+            "citations": citations,
             "confidence": 1.0,
             "computed_via": "pandas",
         }
     if "operating margin" in q_lower:
         val = yr_ratios["operating_margin"] * 100
+        citations = get_metric_source_chunks(target_year, ["operating_income", "revenue"], company=company or "AAPL")
         return {
             "answer": f"Apple's Operating Margin for FY{target_year} was {val:.2f}%, calculated as Operating Income / Revenue.",
             "value": round(val, 2),
             "metric": "operating_margin",
             "year": target_year,
-            "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+            "citations": citations,
             "confidence": 1.0,
             "computed_via": "pandas",
         }
     if "net margin" in q_lower or "profit margin" in q_lower:
         val = yr_ratios["net_margin"] * 100
+        citations = get_metric_source_chunks(target_year, ["net_income", "revenue"], company=company or "AAPL")
         return {
             "answer": f"Apple's Net Profit Margin for FY{target_year} was {val:.2f}%, calculated as Net Income / Revenue.",
             "value": round(val, 2),
             "metric": "net_margin",
             "year": target_year,
-            "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+            "citations": citations,
             "confidence": 1.0,
             "computed_via": "pandas",
         }
-    if "debt to equity" in q_lower:
+    if "roa" in q_lower or "return on assets" in q_lower:
+        val = yr_ratios["roa"] * 100
+        citations = get_metric_source_chunks(target_year, ["net_income", "total_assets"], company=company or "AAPL")
+        return {
+            "answer": f"Apple's ROA for FY{target_year} was {val:.2f}%, calculated as Net Income / Total Assets.",
+            "value": round(val, 2),
+            "metric": "roa",
+            "year": target_year,
+            "citations": citations,
+            "confidence": 1.0,
+            "computed_via": "pandas",
+        }
+    if "roe" in q_lower or "return on equity" in q_lower:
+        val = yr_ratios["roe"] * 100
+        citations = get_metric_source_chunks(target_year, ["net_income", "total_equity"], company=company or "AAPL")
+        return {
+            "answer": f"Apple's ROE for FY{target_year} was {val:.2f}%, calculated as Net Income / Total Shareholders Equity.",
+            "value": round(val, 2),
+            "metric": "roe",
+            "year": target_year,
+            "citations": citations,
+            "confidence": 1.0,
+            "computed_via": "pandas",
+        }
+    if "debt to equity" in q_lower or "debt-to-equity" in q_lower:
         val = yr_ratios["debt_to_equity"]
+        citations = get_metric_source_chunks(target_year, ["total_debt", "total_equity"], company=company or "AAPL")
         return {
             "answer": f"Apple's Debt-to-Equity ratio for FY{target_year} was {val:.2f}x, calculated as Total Debt / Total Shareholders Equity.",
             "value": round(val, 2),
             "metric": "debt_to_equity",
             "year": target_year,
-            "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+            "citations": citations,
+            "confidence": 1.0,
+            "computed_via": "pandas",
+        }
+    if "debt to assets" in q_lower or "debt-to-assets" in q_lower:
+        val = yr_ratios["debt_to_assets"]
+        citations = get_metric_source_chunks(target_year, ["total_debt", "total_assets"], company=company or "AAPL")
+        return {
+            "answer": f"Apple's Debt-to-Assets ratio for FY{target_year} was {val:.2f}, calculated as Total Debt / Total Assets.",
+            "value": round(val, 2),
+            "metric": "debt_to_assets",
+            "year": target_year,
+            "citations": citations,
+            "confidence": 1.0,
+            "computed_via": "pandas",
+        }
+    if "interest coverage" in q_lower:
+        val = yr_ratios["interest_coverage"]
+        citations = get_metric_source_chunks(target_year, ["operating_income", "interest_expense"], company=company or "AAPL")
+        return {
+            "answer": f"Apple's Interest Coverage for FY{target_year} was {val:.1f}x, calculated as Operating Income / Interest Expense.",
+            "value": round(val, 1),
+            "metric": "interest_coverage",
+            "year": target_year,
+            "citations": citations,
             "confidence": 1.0,
             "computed_via": "pandas",
         }
     if "current ratio" in q_lower:
         val = yr_ratios["current_ratio"]
+        citations = get_metric_source_chunks(target_year, ["current_assets", "current_liabilities"], company=company or "AAPL")
         return {
             "answer": f"Apple's Current Ratio for FY{target_year} was {val:.2f}, calculated as Current Assets / Current Liabilities.",
             "value": round(val, 2),
             "metric": "current_ratio",
             "year": target_year,
-            "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+            "citations": citations,
             "confidence": 1.0,
             "computed_via": "pandas",
         }
 
     if "operating income" in q_lower:
         val = yr_fin.get("operating_income", 0.0)
+        citations = get_metric_source_chunks(target_year, ["operating_income"], company=company or "AAPL")
         return {
             "answer": f"Apple's Operating Income for FY{target_year} was ${val:,.1f} million.",
             "value": val,
             "metric": "operating_income",
             "year": target_year,
-            "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+            "citations": citations,
             "confidence": 1.0,
             "computed_via": "pandas",
         }
@@ -233,6 +339,7 @@ def compute_query_metric(
         net_inc = yr_fin.get("net_income", 0.0)
         op_inc = yr_fin.get("operating_income", 0.0)
         rev = yr_fin.get("revenue", 0.0)
+        citations = get_metric_source_chunks(target_year, ["net_income", "operating_income", "revenue"], company=company or "AAPL")
         return {
             "answer": (
                 f"In US GAAP 10-K filings, Apple does not report a single line item titled 'Total Income'. "
@@ -244,7 +351,7 @@ def compute_query_metric(
             "value": net_inc,
             "metric": "net_income",
             "year": target_year,
-            "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+            "citations": citations,
             "confidence": 1.0,
             "computed_via": "pandas",
         }
@@ -253,21 +360,23 @@ def compute_query_metric(
     for m in ["revenue", "net_income", "total_debt", "total_assets", "total_equity"]:
         if m.replace("_", " ") in q_lower:
             val = yr_fin.get(m, 0.0)
+            citations = get_metric_source_chunks(target_year, [m], company=company or "AAPL")
             return {
                 "answer": f"Apple's {m.replace('_', ' ')} for FY{target_year} was ${val:,.1f} million.",
                 "value": val,
                 "metric": m,
                 "year": target_year,
-                "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+                "citations": citations,
                 "confidence": 1.0,
                 "computed_via": "pandas",
             }
 
+    citations = get_metric_source_chunks(target_year, ["revenue", "operating_income", "total_debt", "total_equity"], company=company or "AAPL")
     return {
         "answer": f"Calculated ratios for FY{target_year}: Gross Margin={yr_ratios['gross_margin']*100:.1f}%, Operating Margin={yr_ratios['operating_margin']*100:.1f}%, Debt/Equity={yr_ratios['debt_to_equity']:.2f}x.",
         "year": target_year,
         "ratios": yr_ratios,
-        "citations": [{"year": target_year, "section": "Item 8. Financial Statements", "position_id": 1}],
+        "citations": citations,
         "confidence": 1.0,
         "computed_via": "pandas",
     }

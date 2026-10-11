@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, Optional
 
 from dotenv import load_dotenv
@@ -39,6 +40,25 @@ RRF_K = 60
 
 _embed_model: SentenceTransformer | None = None
 _reranker: Any = None
+
+
+def extract_years_from_query(query: str) -> list[int]:
+    """Detect all 4-digit fiscal years (2021-2025) mentioned in query in order of appearance."""
+    matches = re.findall(r"\b(202[1-5])\b", query)
+    years = []
+    seen = set()
+    for m in matches:
+        y = int(m)
+        if y not in seen:
+            seen.add(y)
+            years.append(y)
+    return years
+
+
+def extract_year_from_query(query: str) -> int | None:
+    """Detect single 4-digit year in query (first match)."""
+    years = extract_years_from_query(query)
+    return years[0] if years else None
 
 
 def get_embed_model() -> SentenceTransformer:
@@ -76,7 +96,7 @@ def get_reranker() -> Any:
 def retrieve_hybrid(
     query: str,
     company: Optional[str] = None,
-    year: Optional[int] = None,
+    year: Optional[int | list[int]] = None,
     section: Optional[str] = None,
     chunk_type: Optional[str] = None,
     vector_top_k: int = 20,
@@ -89,13 +109,54 @@ def retrieve_hybrid(
     Returns a list of dicts with:
       - text, company, year, section, position_id, chunk_type, rerank_score
     """
+    # Multi-year handling: if 2 or more years are requested or detected, run search once per year and merge
+    years_to_search = None
+    if isinstance(year, (list, tuple)) and len(year) >= 2:
+        years_to_search = list(year)
+    elif year is None:
+        detected = extract_years_from_query(query)
+        if len(detected) >= 2:
+            years_to_search = detected
+        elif len(detected) == 1:
+            year = detected[0]
+
+    if years_to_search:
+        results_by_year = [
+            retrieve_hybrid(
+                query=query,
+                company=company,
+                year=y,
+                section=section,
+                chunk_type=chunk_type,
+                vector_top_k=vector_top_k,
+                keyword_top_k=keyword_top_k,
+                final_top_k=final_top_k,
+            )
+            for y in years_to_search
+        ]
+        merged: list[dict[str, Any]] = []
+        seen_ids: set[Any] = set()
+        max_len = max((len(r) for r in results_by_year), default=0)
+        for i in range(max_len):
+            for yr_res in results_by_year:
+                if i < len(yr_res):
+                    c = yr_res[i]
+                    if c["id"] not in seen_ids:
+                        seen_ids.add(c["id"])
+                        merged.append(c)
+                        if len(merged) == final_top_k:
+                            return merged
+        return merged
+
     model = get_embed_model()
     # QUERY-SIDE EMBEDDING: Must include the BGE instruction prefix
     q_emb = model.encode(QUERY_PREFIX + query, normalize_embeddings=True).tolist()
 
     # Base WHERE clauses for metadata filtering
     where_clauses = []
-    params: dict[str, Any] = {"q_emb": str(q_emb), "query_text": query}
+    # For sparse keyword search, strip redundant company mentions since the 10-K corpus is single-company
+    kw_query = re.sub(r"\b(apple('s)?|aapl)\b", "", query, flags=re.IGNORECASE).strip() or query
+    params: dict[str, Any] = {"q_emb": str(q_emb), "query_text": kw_query}
 
     if company:
         where_clauses.append("company = :company")
@@ -155,12 +216,12 @@ def retrieve_hybrid(
     if not docs_by_id:
         return []
 
-    # Sort merged candidates by RRF score and take top 20 for reranking
+    # Sort merged candidates by RRF score and take top 35 for reranking
     sorted_candidates = sorted(
         docs_by_id.values(),
         key=lambda d: rrf_scores[d["id"]],
         reverse=True,
-    )[:20]
+    )[:35]
 
     # 4. Rerank using BAAI/bge-reranker-v2-m3
     reranker = get_reranker()

@@ -248,6 +248,99 @@ def table_to_markdown(table: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+def serialize_table_to_sentences(table: list[list[str]], section_name: str, year: int) -> str:
+    """
+    Serialise a financial table into row-wise sentences with statement caption,
+    fiscal year, and units for semantic retrieval.
+    E.g.: "FY2021 Consolidated Statements of Operations (USD millions): Net income: 94,680 (2021); 57,411 (2020)."
+    """
+    if not table:
+        return ""
+
+    flat_text = " ".join(" ".join(str(c) for c in r) for r in table).lower()
+
+    if "statements of operations" in flat_text or "statement of operations" in flat_text or ("net income" in flat_text and "net sales" in flat_text):
+        caption = "Consolidated Statements of Operations"
+    elif "balance sheets" in flat_text or "balance sheet" in flat_text or ("cash and cash equivalents" in flat_text and "total assets" in flat_text):
+        caption = "Consolidated Balance Sheets"
+    elif "cash flows" in flat_text or ("operating activities" in flat_text and "investing activities" in flat_text):
+        caption = "Consolidated Statements of Cash Flows"
+    elif "comprehensive income" in flat_text:
+        caption = "Consolidated Statements of Comprehensive Income"
+    elif "shareholders’ equity" in flat_text or "shareholders' equity" in flat_text:
+        caption = "Consolidated Statements of Shareholders' Equity"
+    elif "commercial paper" in flat_text and "term debt" in flat_text:
+        caption = "Note Debt and Commercial Paper"
+    elif "segment" in flat_text:
+        caption = "Segment Financial Information"
+    else:
+        clean_sec = re.sub(r"^[A-Za-z0-9\s\.\-]+\.\s*", "", section_name).strip()
+        caption = clean_sec if clean_sec else "Financial Data"
+        if not caption.endswith("Table"):
+            caption += " Table"
+
+    col_years = {}
+    for row_idx in range(min(5, len(table))):
+        row = table[row_idx]
+        for col_idx, cell in enumerate(row):
+            m = re.findall(r"\b(201[8-9]|202[0-9])\b", str(cell))
+            if m:
+                col_years[col_idx] = int(m[-1])
+
+    sorted_year_cols = sorted(col_years.keys())
+
+    sentences = []
+    current_category = ""
+
+    for row in table:
+        clean_cells = [str(c).strip() for c in row if str(c).strip() and str(c).strip() != "$"]
+        if not clean_cells:
+            continue
+
+        if all(re.search(r"\b(201[8-9]|202[0-9]|years ended|months ended|as of|september|october)\b", c, re.I) for c in clean_cells):
+            continue
+
+        first_cell = clean_cells[0]
+        numbers_in_row = [c for c in clean_cells[1:] if re.search(r"\d", c)]
+        if not numbers_in_row:
+            if first_cell.endswith(":") or len(first_cell.split()) <= 4:
+                current_category = first_cell.rstrip(":")
+            continue
+
+        label = first_cell.rstrip(":")
+        if current_category and current_category.lower() not in label.lower() and label.lower() not in ["total", "operating income", "net income"]:
+            full_label = f"{current_category} - {label}"
+        else:
+            full_label = label
+
+        val_year_pairs = []
+        if sorted_year_cols:
+            for c_idx in sorted_year_cols:
+                if c_idx < len(row):
+                    val = str(row[c_idx]).strip().replace("$", "").strip()
+                    if (not val or val == "$") and c_idx + 1 < len(row):
+                        val = str(row[c_idx + 1]).strip().replace("$", "").strip()
+                    if val and re.search(r"\d", val):
+                        yr = col_years[c_idx]
+                        val_year_pairs.append(f"{val} ({yr})")
+
+        if not val_year_pairs:
+            for val in numbers_in_row[:3]:
+                clean_v = val.replace("$", "").strip()
+                val_year_pairs.append(f"{clean_v} ({year})")
+
+        if val_year_pairs:
+            pairs_str = "; ".join(val_year_pairs)
+            sentences.append(f"{full_label}: {pairs_str}.")
+
+    unit_str = " (USD millions)" if any(term in flat_text for term in ["million", "millions", "in millions", "shareholders", "assets", "sales"]) else ""
+    header_line = f"FY{year} {caption}{unit_str}:"
+
+    if sentences:
+        return f"{header_line}\n" + "\n".join(sentences)
+    return ""
+
+
 def is_empty_table(table: list[list[str]]) -> bool:
     """True if the table contains only whitespace/empty cells."""
     return all(cell.strip() == "" for row in table for cell in row)
@@ -296,6 +389,8 @@ def chunk_document(doc: dict[str, Any]) -> list[dict[str, Any]]:
                     "chunk_type":  "text",
                     "chunk_index": chunk_index_within_section,
                     "text":        split_text,
+                    "display_text": split_text,
+                    "raw_text":    split_text,
                     "token_count": tok,
                 })
                 global_idx += 1
@@ -309,23 +404,30 @@ def chunk_document(doc: dict[str, Any]) -> list[dict[str, Any]]:
             if not md.strip():
                 continue
 
-            # Prepend section context so the table is self-contained
-            table_text = (
+            # Original Markdown table text preserved for display
+            original_display_text = (
                 f"[Table from: {section_name}]\n\n"
                 f"{md}"
             )
-            tok = approx_tokens(table_text)
+            
+            # Row-wise sentence serialization for dense embedding & keyword matching
+            sentences_text = serialize_table_to_sentences(tbl, section_name, year)
+            final_text = sentences_text if sentences_text.strip() else original_display_text
+
+            tok = approx_tokens(final_text)
             chunk_id = f"{company}_{year}_{global_idx:04d}"
             chunks.append({
-                "chunk_id":    chunk_id,
-                "company":     company,
-                "year":        year,
-                "section":     section_name,
-                "position_id": position_id,
-                "chunk_type":  "table",
-                "chunk_index": chunk_index_within_section,
-                "text":        table_text,
-                "token_count": tok,
+                "chunk_id":     chunk_id,
+                "company":      company,
+                "year":         year,
+                "section":      section_name,
+                "position_id":  position_id,
+                "chunk_type":   "table",
+                "chunk_index":  chunk_index_within_section,
+                "text":         final_text,
+                "display_text": original_display_text,
+                "raw_text":     original_display_text,
+                "token_count":  tok,
             })
             global_idx += 1
             chunk_index_within_section += 1

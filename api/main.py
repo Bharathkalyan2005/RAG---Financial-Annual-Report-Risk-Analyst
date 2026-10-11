@@ -54,15 +54,16 @@ from agent.loop import run_agent_loop
 # ─────────────────────────────────────────────────────────────────────────────
 
 class QueryRequest(BaseModel):
-    question: str = Field(..., example="What was Apple's total debt in 2024?")
-    year: Optional[int] = Field(None, example=2024, description="Optional fiscal year filter (2021-2025)")
+    question: str = Field(..., json_schema_extra={"example": "What was Apple's total debt in 2024?"})
+    year: Optional[int] = Field(None, json_schema_extra={"example": 2024}, description="Optional fiscal year filter (2021-2025)")
     top_k: int = Field(5, ge=1, le=10, description="Number of top chunks to return")
 
 
 class AgentQueryRequest(BaseModel):
-    question: str = Field(..., example="How did debt and FX risk change from 2022 to 2025?")
-    year: Optional[int] = Field(None, example=2024, description="Optional fiscal year filter (2021-2025)")
-    mode: str = Field("agent", example="agent", description="'agent' for iterative tool loop, 'fast' for single-pass pipeline")
+    question: str = Field(..., json_schema_extra={"example": "How did debt and FX risk change from 2022 to 2025?"})
+    year: Optional[int] = Field(None, json_schema_extra={"example": 2024}, description="Optional fiscal year filter (2021-2025)")
+    mode: str = Field("agent", json_schema_extra={"example": "agent"}, description="'agent' for iterative tool loop, 'fast' for single-pass pipeline")
+
 
 
 class CitationItem(BaseModel):

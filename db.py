@@ -95,6 +95,8 @@ class Chunk(Base):
 
     # ── Content ─────────────────────────────────────────────────────────────
     text = Column(Text, nullable=False)
+    display_text = Column(Text, nullable=True)               # original markdown table or full display text
+    raw_text = Column(Text, nullable=True)                   # alias for display_text
 
     # ── Semantic search — 1024-dim vector (BAAI/bge-large-en-v1.5) ─────────
     # pgvector extension must be enabled before the table is created.
@@ -138,6 +140,7 @@ class Financial(Base):
     year = Column(Integer, nullable=False, index=True)
     metric = Column(String(256), nullable=False)   # e.g. "revenue", "gross_margin_pct"
     value = Column(Float, nullable=True)           # numeric result (Python-computed)
+    source_chunk_id = Column(Integer, nullable=True) # ID of table chunk from which value was extracted
 
     __table_args__ = (
         # Composite index: common query pattern is "give me all metrics for AAPL 2023"
