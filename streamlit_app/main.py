@@ -20,7 +20,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
+
+# Ensure project root is always in sys.path and is current working directory
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+os.chdir(ROOT_DIR)
 
 import pandas as pd
 import streamlit as st
